@@ -1,0 +1,136 @@
+from astropy.io import fits
+import numpy as np
+from astropy.table import Table
+import matplotlib.pyplot as plt
+import galpy
+from galpy.orbit import Orbit
+from galpy.potential import MWPotential2014
+import astropy.units as u
+from astropy.coordinates import SkyCoord
+from matplotlib.backends.backend_pdf import PdfPages
+import imageio
+import os
+import glob
+
+hdul = fits.open('asu_topcat.fits') # open a FITS file of the 256 stars
+data = hdul[1].data  # assume the first extension is a table
+t = Table(data)
+
+ra_list = t.columns['RA_ICRS']
+dec_list = t.columns['DE_ICRS']
+pmra_list = t.columns['pmRA']
+parallax = (t.columns['Plx'])/1000 #units of plx are milliarcseconds (mas) &&& 1 arc second = 1000 mas 
+pmdec_list = t.columns['pmDE']
+rv_list = t.columns['RV']
+gcR_list = t.columns['gcR']
+gcPHI_list = t.columns['gcPHI']
+gcZ_list = t.columns['gcZ']
+gcPHI_list = -(gcPHI_list -np.pi)
+#gcPHI_list
+gcvR_list = t.columns['gcvR']
+gcvPHI_list = t.columns['gcvPHI']
+gcvZ_list = t.columns['gcvZ']
+#x_list = t.columns['X']
+#y_list = t.columns['Y']
+#z_list = t.columns['Z']
+
+
+def OrbitIntegrate(time, pathname, increment = 5, X=False, Y=False, Z=False): 
+    
+    orbits= Orbit(vxvv=[gcR_list*u.pc,gcvR_list*u.km/u.s,gcvPHI_list*u.km/u.s,gcZ_list*u.pc,gcvZ_list*u.km/u.s,
+                        gcPHI_list*u.rad])
+    ts= np.linspace(0,time,10000)*u.Myr
+    orbits.integrate(ts,MWPotential2014)
+    sun = Orbit()
+    sun.integrate(ts,MWPotential2014)
+    
+    if time < 0:
+        plotrange = np.arange(time, 0, increment)*u.Myr
+    else:
+        plotrange = np.arange(0, time+increment, increment)*u.Myr
+    
+    for i in plotrange:  
+        fig, (ax1) = plt.subplots(1,1,figsize=(8,10))
+        plt.subplots_adjust(bottom=0.1, right=1.2, top=0.9) 
+        plt.rcParams["font.family"] = "Times New Roman"
+        
+        if time < 0:
+            ax1.set_title('t='+ str(i+120*u.Myr)  +'     ('  + str(i)+' ago)'  , fontsize= 16)
+        else:
+            ax1.set_title('t='+ str(i+120*u.Myr)  +'     ('  + str(i)+' future)'  , fontsize= 16)
+        
+        theta = np.median(orbits.phi(i))
+        x_p = orbits.x(i)*np.cos(theta) + orbits.y(i)*np.sin(theta)
+        y_p = -orbits.x(i)*np.sin(theta) + orbits.y(i)*np.cos(theta)
+        z_p = orbits.z(i)        
+        vx_p = orbits.vx(i)*np.cos(theta) + orbits.vy(i)*np.sin(theta)
+        vy_p = -orbits.vx(i)*np.sin(theta) + orbits.vy(i)*np.cos(theta)
+        vz_p = orbits.vz(i)
+        x_p_sun = sun.x(i)*np.cos(theta) + sun.y(i)*np.sin(theta)
+        y_p_sun = -sun.x(i)*np.sin(theta) + sun.y(i)*np.cos(theta) 
+        z_p_sun = sun.z(i)
+
+        if X == True and Y == True:
+            x = x_p
+            vx =vx_p
+            y = y_p
+            vy = vy_p
+            xsun = x_p_sun
+            ysun = y_p_sun
+            string = ("X", "Y")
+            #print(1)
+        elif X == True and Z == True:
+            x = x_p 
+            vx = vx_p
+            y = z_p
+            vy = vz_p
+            xsun = x_p_sun
+            ysun = z_p_sun
+            string = ("X","Z")
+            #print(2)
+        elif Y == True and Z == True:
+            x = y_p
+            vx = vy_p
+            y= z_p
+            vy = vz_p
+            xsun = y_p_sun
+            ysun = z_p_sun
+            string = ("Y","Z")
+            #print(3)
+        else:
+            pass
+        
+
+        ax1.quiver(x-np.median(x), y-np.median(y), vx-np.median(vx), vy-np.median(vy), width = 1/400)
+        ax1.scatter(x-np.median(x), y-np.median(y), s=50, color = 'c', edgecolors = 'k')
+        #ax1.quiver(sun.x(i), sun.y(i), (sun.vx(i)-np.median(orbits.vx(i))), (sun.vy(i)-np.median(orbits.vy(i))), width = 1/400)
+
+        ax1.scatter(xsun-np.median(x), ysun-np.median(y), color = 'orange', s = 50, edgecolors = 'k')
+        #ax1.set_title('t=' +str(i))
+        ax1.set_xlabel(string[0]+ '* (kpc)', fontsize = 16)
+        ax1.set_ylabel(string[1]+ '* (kpc)', fontsize = 16)
+            
+        if X == True and Y == True:
+            ax1.set_xlim([-2, +2])
+            ax1.set_ylim([-2.5, +2.5])
+        elif X == True and Z == True:
+            ax1.set_xlim([-2, +2])
+            ax1.set_ylim([-.3, +.3])
+        elif Y == True and Z == True:
+            ax1.set_xlim([-2.5, +2.5])
+            ax1.set_ylim([-.3, +.3])
+        else:
+            pass
+    
+        plt.savefig(pathname+str(i)+'.png', bbox_inches='tight', dpi = 150, pad_inches = 1)
+        plt.close(fig)
+
+def gifmaker(foldername, gifname):
+    filenames = sorted(glob.glob(foldername), key = os.path.getmtime)
+    with imageio.get_writer(gifname, mode='I') as writer:
+        for filename in filenames:
+            image = imageio.imread(filename)
+            writer.append_data(image)
+            
+OrbitIntegrate(time=380., increment=5, pathname='gifTrial/plot', X=True, Z=True)
+gifmaker('gifTrial/plot*', 'gifTrial/XZ.gif')
